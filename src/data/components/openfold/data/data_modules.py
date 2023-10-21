@@ -654,7 +654,7 @@ class OpenFoldDataModule(pl.LightningDataModule):
             stage=stage,
             generator=generator,
             batch_size=self.config.data_module.data_loaders.batch_size,
-            num_workers=self.config.data_module.data_loaders.num_workers,
+            num_workers=self.config.moduledata_.data_loaders.num_workers,
             collate_fn=batch_collator,
         )
 

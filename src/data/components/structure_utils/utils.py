@@ -1,6 +1,5 @@
 import pickle, os, glob, dataclasses, string, io, gzip, collections
 from pathlib import Path
-from typing import Any
 import numpy as np
 import pandas as pd
 import networkx as nx
@@ -12,13 +11,9 @@ from Bio.PDB.Chain import Chain
 from torch.utils import data
 import torch
 
-from . import chemical
-from . import residue_constants
-from . import protein
-from . import so3_utils
+from src.data.components.structure_utils import chemical, residue_constants, protein, so3_utils
 from src.data.components.openfold.utils import rigid_utils
 from src.data.components.openfold.data import parsers
-
 
 Protein = protein.Protein
 
@@ -717,21 +712,25 @@ def run_PTGLtools(pdb_id: str, pdb_path: str, tool_obj_path: str, tmp_dir: str):
     if not Path(tmp_dir).exists():
         Path(tmp_dir).mkdir(parents=True, exist_ok=True)
     tmp_dir = os.path.abspath(tmp_dir)
-    
-    dssp_out_path = os.path.join(tmp_dir, f'{pdb_id}.dssp')
-    os.system(f"mkdssp -i {pdb_path} -o {dssp_out_path}")
-    os.system(f"cd {tmp_dir}")
-    os.system(f"java -jar {tool_obj_path}/PTGLgraphComputation.jar {pdb_id} --settingsfile {tool_obj_path}/PTGLgraphComputation_settings.txt")
+    pdb_basename = os.path.basename(pdb_path)
 
+    # os.system(f"cd {tmp_dir}")
+    # os.system(f"cp {pdb_path} .")
+    # os.system(f"mkdssp -i {pdb_basename} -o {pdb_id}.dssp")
+    # os.system(f"java -jar {tool_obj_path}/PTGLgraphComputation.jar {pdb_id} --settingsfile {tool_obj_path}/PTGLgraphComputation_settings.txt")
+
+    os.system(f"cd {tmp_dir}; cp {pdb_path} .; mkdssp -i {pdb_basename} -o {pdb_id}.dssp; java -jar {tool_obj_path}/PTGLgraphComputation.jar {pdb_id} --settingsfile {tool_obj_path}/PTGLgraphComputation_settings.txt --no-warn --silent")
+    
     # load GML outputs
     gml_file_list = glob.glob(f"{tmp_dir}/{pdb_id}*albe_PG.gml")
     out_dict = {}
     for gml_file in gml_file_list:
+        gml_file = os.path.basename(gml_file)
         chain_id = gml_file.split('_')[1] # auth_chain_id
         gml_out = nx.read_gml(f'{tmp_dir}/{gml_file}')
         out_dict[chain_id] = gml_out
     
-    os.remove(tmp_dir)
+    os.system(f"rm -r {tmp_dir}")
     return out_dict
 
     
@@ -755,7 +754,7 @@ def trim_PTGL_gml(gml_obj: nx.Graph, auth_resi_index: List):
         # for multi-chain proteins, dsspResStart/End represent 1-based indices in the concatenated sequecnes
         # for proteins with inserted residues, such residues will be included in all cases
         pdbRes_list = node_data['pdbResiduesFull'].split(',')
-        seqRes_ids = [authId_to_seqId[pdb_r] for pdb_r in pdbRes_list]
+        seqRes_ids = [authId_to_seqId[pdb_r] for pdb_r in pdbRes_list if pdb_r in authId_to_seqId.keys()]
         out_feats['sse_nodes'][node_id] = {
             'seqRes_ids': seqRes_ids,
             'sse_type': node_data['sseType'],

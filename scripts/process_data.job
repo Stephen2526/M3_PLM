@@ -1,0 +1,33 @@
+#!/bin/bash
+##ENVIRONMENT SETTINGS; CHANGE WITH CAUTION
+#SBATCH --export=NONE                #Do not propagate environment
+#SBATCH --get-user-env=L             #Replicate login environment
+
+##NECESSARY JOB SPECIFICATIONS
+#SBATCH --time=96:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=48
+#SBATCH --mem=20G
+#####SBATCH --exclusive
+#####SBATCH --gres=gpu:2
+#####SBATCH --partition=gpu
+
+##OPTIONAL JOB SPECIFICATIONS
+####SBATCH --mail-type=ALL
+####SBATCH --mail-user=sunyuanfei@tamu.edu
+#SBATCH --account=132807221349
+#SBATCH --job-name=dt_pro
+#SBATCH --output=/scratch/user/sunyuanfei/Projects/PLM_3_Modal/logs/process_pdb_dataset.out
+
+
+#First Executable Line
+
+module purge
+source ~/.bashrc
+#module load WebProxy
+#module load cuDNN/8.0.5.39-CUDA-11.1.1 GCC/11.3.0
+#module load cuDNN/8.0.4.30-CUDA-11.1.1 GCC/11.3.0
+#module load cuDNN/8.2.1.32-CUDA-11.3.1 GCC/11.3.0
+conda activate env_lightning
+
+python src/data/components/structure_utils/process_pdb_dataset.py --mmcif_dir=/scratch/user/sunyuanfei/Projects/OpenProteinSet/pdb_mmcif/mmcif_files --min_file_size=1000 --max_resolution=5.0 --max_len=1024 --write_dir=/scratch/user/sunyuanfei/Projects/PLM_3_Modal/data/pdb_pickles --tmp_dir=/scratch/user/sunyuanfei/Projects/PLM_3_Modal/data/tmp_dir --PTGL_path=/scratch/user/sunyuanfei/Projects/PTGLtools/PTGLgraphComputation --OpenProtein_path=/scratch/user/sunyuanfei/Projects/OpenProteinSet

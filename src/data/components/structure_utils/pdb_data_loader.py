@@ -50,18 +50,12 @@ class PdbDataset(data.Dataset):
             data_conf,
             diffuser,
             is_training,
-            tokenizer: Union[str, BaseTokenizer] = 'pfam',
         ):
         self._log = logging.getLogger(__name__)
         self._is_training = is_training
         self._data_conf = data_conf
         self._init_metadata()
         self._diffuser = diffuser
-
-        # tokenizer for PLM
-        if isinstance(tokenizer, str):
-            tokenizer = BaseTokenizer(vocab=tokenizer)
-        self.tokenizer = tokenizer
 
     @property
     def is_training(self):
@@ -220,35 +214,6 @@ class PdbDataset(data.Dataset):
 
     def __len__(self):
         return len(self.csv)
-
-    def _apply_bert_mask(self, tokens: List[str]) -> Tuple[List[str], List[int]]:
-        masked_tokens = copy(tokens)
-        labels = np.zeros([len(tokens)], np.int64) - 1
-
-        for i, token in enumerate(tokens):
-            # Tokens begin and end with start_token and stop_token, ignore these
-            if token in (self.tokenizer.start_token, self.tokenizer.stop_token):
-                continue
-
-            prob = random.random()
-            if prob < 0.15:
-                prob /= 0.15
-                labels[i] = self.tokenizer.convert_token_to_id(token)
-
-                if prob < 0.8:
-                    # 80% random change to mask token
-                    token = self.tokenizer.mask_token
-                elif prob < 0.9:
-                    # 10% chance to change to random token(not special tokens)
-                    token = self.tokenizer.convert_id_to_token(
-                        random.sample(self.tokenizer.get_normal_token_ids(),1)[0])
-                else:
-                    # 10% chance to keep current token
-                    pass
-
-                masked_tokens[i] = token
-
-        return masked_tokens, labels
 
     def __getitem__(self, idx):
 

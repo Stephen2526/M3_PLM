@@ -6,15 +6,14 @@ from Bio.PDB.ResidueDepth import ResidueDepth
 from Bio.Data import SCOPData
 import numpy as np
 
-from . import residue_constants
-from . import protein
-from . import utils as du
+from src.data.components.structure_utils import residue_constants, protein
+from src.data.components.structure_utils import utils as du
 
 ProteinChain = protein.ProteinChain
 Protein = protein.Protein
 
 
-def process_chain(chain: Chain, auth_chain_id: Union[str,int], dssp_obj: DSSP=None, resiDepth_obj: ResidueDepth=None, auth_to_mmcif_cid: Dict=None) -> ProteinChain:
+def process_chain(chain: Chain, auth_chain_id: Union[str,int], dssp_obj: DSSP=None, resiDepth_obj: ResidueDepth=None) -> ProteinChain:
     """Convert a PDB chain object into a AlphaFold Protein instance.
     
     Forked from alphafold.common.protein.from_pdb_string
@@ -46,13 +45,14 @@ def process_chain(chain: Chain, auth_chain_id: Union[str,int], dssp_obj: DSSP=No
     atom_mask = []
     residue_auth_index = []
     b_factors = []
-    chain_int_ids = []
     sse3_ids = []
     sse8_ids = []
     resi_depth = []
     ca_atom_depth = []
     for res in chain:
         res_id = res.id #(hetero flag, sequence identifier, insertion code)
+        if res_id[0] != ' ':
+            continue
         res_name = res.resname
         #res_shortname = residue_constants.restype_3to1.get(res_name, 'X')
         res_shortname = SCOPData.protein_letters_3to1.get(res_name, 'X')
@@ -80,13 +80,17 @@ def process_chain(chain: Chain, auth_chain_id: Union[str,int], dssp_obj: DSSP=No
         b_factors.append(res_b_factors)
 
         # process DSSP and ResidueDepth outputs
-        res_id = res.id
         if process_dssp_rd:
-            sse8_char = dssp_obj[(auth_chain_id, res_id)][2]
+            sse8_char = dssp_obj[(auth_chain_id, res_id)][2] if (auth_chain_id, res_id) in dssp_obj.keys() else '-'
             sse8 = residue_constants.SS8_char2id[sse8_char]
             sse3 = residue_constants.SS3_char2id[residue_constants.SS8_to_SS3[sse8_char]]
-            resi_rd = resiDepth_obj[(auth_chain_id, res_id)][0]
-            ca_atom_rd = resiDepth_obj[(auth_chain_id, res_id)][1]
+            
+            if (auth_chain_id, res_id) in resiDepth_obj.keys(): 
+                resi_rd = resiDepth_obj[(auth_chain_id, res_id)][0]
+                ca_atom_rd = resiDepth_obj[(auth_chain_id, res_id)][1]
+            else:
+                resi_rd = np.nan
+                ca_atom_rd = np.nan
             sse8_ids.append(sse8)
             sse3_ids.append(sse3)
             resi_depth.append(resi_rd)
@@ -99,7 +103,6 @@ def process_chain(chain: Chain, auth_chain_id: Union[str,int], dssp_obj: DSSP=No
         seqres=resi_str,
         res_type3=resi_type3,
         residue_auth_index=residue_auth_index,
-        mmcif_chain_id=auth_to_mmcif_cid[auth_chain_id],
         auth_chain_id=auth_chain_id,
         b_factors=np.array(b_factors),
         sse3_type_ids=np.array(sse3_ids, dtype=np.int8) if len(sse3_ids) > 0 else None,

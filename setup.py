@@ -5,9 +5,9 @@ from setuptools import find_packages, setup
 setup(
     name="src",
     version="0.0.1",
-    description="Describe Your Cool Project",
-    author="",
-    author_email="",
+    description="PLM with 3 modalities",
+    author="Yuanfei Sun",
+    author_email="sunyuanfei@tamu.edu",
     url="https://github.com/user/project",
     install_requires=["lightning", "hydra-core"],
     packages=find_packages(),

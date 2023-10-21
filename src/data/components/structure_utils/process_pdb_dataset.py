@@ -6,7 +6,7 @@
 - Writes all processed examples out to specified path.
 """
 
-import argparse, glob
+import argparse, glob, random
 import dataclasses
 import functools as fn
 import pandas as pd
@@ -20,11 +20,8 @@ from Bio.PDB import MMCIFParser, PDBIO
 from Bio.PDB.DSSP import DSSP
 from Bio.PDB.ResidueDepth import ResidueDepth
 
-import mmcif_parsing
-import residue_constants
-import utils as du
-import errors
-import parsers
+from src.data.components.structure_utils import mmcif_parsing, residue_constants, errors, parsers
+import src.data.components.structure_utils.utils as du
 from src.data.components.openfold.data.parsers import parse_hhr
 
 
@@ -54,7 +51,7 @@ parser.add_argument(
     '--max_len',
     help='Max length of protein.',
     type=int,
-    default=512)
+    default=1024)
 parser.add_argument(
     '--num_processes',
     help='Number of processes.',
@@ -73,7 +70,19 @@ parser.add_argument(
     '--verbose',
     help='Whether to log everything.',
     action='store_true')
-
+parser.add_argument(
+    '--tmp_dir',
+    help='Temporary dir storing intermediate files.',
+    type=str,
+    default='./data/tmp_dir')
+parser.add_argument(
+    '--PTGL_path',
+    help='Path to PTGL executable files.',
+    type=str)
+parser.add_argument(
+    '--OpenProtein_path',
+    help='Path to OpenProteinSet data files.',
+    type=str)
 
 def _retrieve_mmcif_files(
         mmcif_dir: str, max_file_size: int, min_file_size: int, debug: bool):
@@ -104,7 +113,9 @@ def _retrieve_mmcif_files_4OpenProteinSet(
     print('Gathering mmCIF paths')
     total_num_files = 0
     all_mmcif_paths = []
-    for cif_fl in tqdm(os.listdir(mmcif_dir)):
+    mmcif_list = os.listdir(mmcif_dir)
+    random.shuffle(mmcif_list)
+    for cif_fl in tqdm(mmcif_list):
         mmcif_path = os.path.join(mmcif_dir,cif_fl)
         total_num_files += 1
         if os.path.getsize(mmcif_path) >= min_file_size:
@@ -208,29 +219,35 @@ def process_mmcif_save_pkl_4openProteinSet(
     auth_cid_to_seq = parsed_mmcif.chain_to_seqres
     mmcif_model = parsed_mmcif.structure
     mmcif_to_auth_cid = parsed_mmcif.mmcif_to_auth_cid
-    auth_to_mmcif_cid = {auth_cid: mmcif_cid for mmcif_cid, auth_cid in mmcif_to_auth_cid.items()}
-
-    struct_chains = {
-        auth_cid: mmcif_model[auth_cid]
-        for auth_cid in auth_cid_to_seq.keys()}
+    all_seqs = set()
+    struct_chains = {}
+    for auth_cid, entitySeq in auth_cid_to_seq.items():
+        struct_chains[auth_cid] = mmcif_model[auth_cid]
+        all_seqs.add(entitySeq)
+    
+    if len(all_seqs) == 1:
+        metadata_shared['quaternary_category'] = 'homomer'
+    else:
+        metadata_shared['quaternary_category'] = 'heteromer'
     metadata_shared['num_chains'] = len(struct_chains)
-
-    # Biopython calculation of SS and residueDepth
-    dssp = DSSP(mmcif_model, mmcif_path, dssp='mkdssp')
-    rd = ResidueDepth(mmcif_model)
-
-    # SSE contacts
-    SSE_contact_chains = du.run_PTGLtools(mmcif_name, mmcif_path, PTGL_path, f"{tmp_dir}/{mmcif_name}")
-
+    
+    try:
+        # Biopython calculation of SS and residueDepth
+        dssp = DSSP(mmcif_model, mmcif_path, dssp='mkdssp')
+        rd = ResidueDepth(mmcif_model)
+        # SSE contacts
+        SSE_contact_chains = du.run_PTGLtools(mmcif_name, mmcif_path, PTGL_path, f"{tmp_dir}/{mmcif_name}")
+    except Exception as e:
+        raise errors.DataError(f'Exit DSSP/ResidueDepth/PTGL with error {e}')
+    
     # Extract features
     metadata_chains = []
     struct_feats = {}
-    all_seqs = set()
+    
     for auth_chain_id, chain in struct_chains.items():
         metadata_tmp = {}
-        chain_prot = parsers.process_chain(chain, auth_chain_id, dssp_obj=dssp, resiDepth_obj=rd, auth_to_mmcif_cid=auth_to_mmcif_cid)
+        chain_prot = parsers.process_chain(chain, auth_chain_id, dssp_obj=dssp, resiDepth_obj=rd)
         chain_prot = du.parse_chain_feats(chain_prot)
-        all_seqs.add(tuple(chain_prot.aatype))
         
         # find modeled indices
         modeled_idx = np.where(chain_prot.aatype != 20)[0]
@@ -238,12 +255,14 @@ def process_mmcif_save_pkl_4openProteinSet(
             raise errors.LengthError('No modeled residues')
         min_modeled_idx = np.min(modeled_idx)
         max_modeled_idx = np.max(modeled_idx)
-        modeled_seq_len = max_modeled_idx - min_modeled_idx + 1
+        modeled_seq_len = int(max_modeled_idx - min_modeled_idx + 1)
         chain_prot.modeled_idx = modeled_idx
         if chain_prot.aatype.shape[0] > max_len:
             raise errors.LengthError(
                 f"Too long {chain_prot.aatype.shape[0]}")
 
+        if auth_chain_id not in SSE_contact_chains.keys():
+            continue
         # SSE contacts (sse_nodes:{node_id:{...}, ...}, sse_edges: {0:{...}, ...})
         chain_prot.sse_contacts = du.trim_PTGL_gml(SSE_contact_chains[auth_chain_id], chain_prot.residue_auth_index)
         
@@ -284,17 +303,13 @@ def process_mmcif_save_pkl_4openProteinSet(
         # chain_dict = dataclasses.asdict(chain_prot) # convert to dict
         struct_feats[auth_chain_id] = chain_prot
 
-    if len(all_seqs) == 1:
-        metadata_shared['quaternary_category'] = 'homomer'
-    else:
-        metadata_shared['quaternary_category'] = 'heteromer'
     #complex_feats = du.concat_np_features(struct_feats, False)
 
     try:
         # Workaround for MDtraj not supporting mmcif in their latest release.
         # MDtraj source does support mmcif https://github.com/mdtraj/mdtraj/issues/652
         # We temporarily save the mmcif as a pdb and delete it after running mdtraj.
-        p = MMCIFParser()
+        p = MMCIFParser(QUIET=True)
         struc = p.get_structure("", mmcif_path)
         io = PDBIO()
         io.set_structure(struc)
@@ -310,7 +325,7 @@ def process_mmcif_save_pkl_4openProteinSet(
         os.remove(pdb_path)
     except Exception as e:
         os.remove(pdb_path)
-        raise errors.DataError(f'Mdtraj/Biopython failed with error {e}')
+        raise errors.DataError(f'Mdtraj failed with error {e}')
 
     # metadata['coil_percent'] = np.sum(pdb_ss == 'C') / metadata['modeled_seq_len']
     # metadata['helix_percent'] = np.sum(pdb_ss == 'H') / metadata['modeled_seq_len']
@@ -320,7 +335,11 @@ def process_mmcif_save_pkl_4openProteinSet(
     metadata_shared['radius_gyration'] = pdb_rg
 
     # update chain-specfic metadata with shared entries
-    metadata_out =[meta_chain.update(metadata_shared) for meta_chain in metadata_chains]
+    metadata_out =[]
+    for meta_chain in metadata_chains:
+        meta_chain.update(metadata_shared)
+        metadata_out.append(meta_chain)
+
 
     # Write features to pickles.
     du.write_pkl(processed_mmcif_path, struct_feats, create_dir=True)
@@ -539,8 +558,11 @@ def main(args):
         args.mmcif_dir, args.min_file_size, args.debug)
     total_num_paths = len(all_mmcif_paths)
     write_dir = args.write_dir
+    tmp_dir = args.tmp_dir
     if not os.path.exists(write_dir):
         os.makedirs(write_dir)
+    if not os.path.exists(tmp_dir):
+        os.makedirs(tmp_dir)
     if args.debug:
         metadata_file_name = 'metadata_debug.csv'
     else:
@@ -555,7 +577,7 @@ def main(args):
             args.max_resolution,
             args.max_len,
             write_dir,
-            tmp_dir=args.tmp_dir, 
+            tmp_dir=tmp_dir, 
             PTGL_path=args.PTGL_path,
             OpenProtein_path=args.OpenProtein_path)
     else:
@@ -565,7 +587,7 @@ def main(args):
             max_resolution=args.max_resolution,
             max_len=args.max_len,
             write_dir=write_dir,
-            tmp_dir=args.tmp_dir, 
+            tmp_dir=tmp_dir, 
             PTGL_path=args.PTGL_path,
             OpenProtein_path=args.OpenProtein_path)
         # Uses max number of available cores.

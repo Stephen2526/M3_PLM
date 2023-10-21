@@ -1,6 +1,6 @@
 from typing import Any, Dict, Optional, Tuple, Union, List
 
-import torch, os
+import torch, os, logging
 import numpy as np
 import pandas as pd
 from omegaconf import DictConfig
@@ -39,47 +39,30 @@ class ThreeModalitySingleDataset(Dataset):
         data_dir:
             A path to a directory containing mmCIF files (in train
             mode) or FASTA files (in inference mode).
-        alignment_dir:
-            A path to a directory containing only data in the format 
-            output by an AlignmentRunner 
-            (defined in openfold.features.alignment_runner).
-            I.e. a directory of directories named {PDB_ID}_{CHAIN_ID}
-            or simply {PDB_ID}, each containing .a3m and .hhr
-            files.
         config:
             A dataset config object (defined by Hydra)
-        alignment_info (dataframe):
-            meta info of alignment data with keys:
-            - chain_nm: {PDB_ID}_{CHAIN_ID} or {PDB_ID}
-            - seq_len: seq length
-            - ext: structure file extension, e.g. ".cif", ".core", ".pdb"
-            - ...
-
         mode:
-            "fit", "val", "test", or "predict" 
+            "fit", "val", "test", or "predict"
     """
 
     def __init__(self,
                 data_dir: str = None,
                 config: DictConfig = None,
-                mode: str = "train",
+                mode: str = "fit",
+                struct_diffuser = None,
                 tokenizer: Union[str, BaseTokenizer, PreTrainedTokenizerBase] = PreTrainedTokenizerFast,
                  **kwargs):
         super(ThreeModalitySingleDataset, self).__init__()
-        if isinstance(tokenizer, str):
-            tokenizer = BaseTokenizer(vocab=tokenizer)
-        self.tokenizer = tokenizer
+        self._log = logging.getLogger(__name__)
         
+        self.diffuser = struct_diffuser        
         self.data_dir = data_dir
         self.config = config
         self.mode = mode
+        if isinstance(tokenizer, str):
+            tokenizer = BaseTokenizer(vocab=tokenizer)
         self.tokenizer = tokenizer
 
-        self.supported_exts = [".cif", ".core", ".pdb"]
-        valid_modes = ["train", "eval", "predict"]
-        if(mode not in valid_modes):
-            raise ValueError(f'mode must be one of {valid_modes}')
-    
         if(alignment_meta is not None):
             self._chain_nms = alignment_meta['chain_nm'].to_list()
         else:
@@ -88,73 +71,22 @@ class ThreeModalitySingleDataset(Dataset):
         self._chain_id_to_idx_dict = {
             chain: i for i, chain in enumerate(self._chain_nms)
         }
-        
+
+    @property
+    def current_mode(self):
+        return self.mode
+
+    @property
+    def diffuser(self):
+        return self.diffuser
+
+    @property
+    def data_conf(self):
+        return self.config
 
     def __len__(self) -> int:
         return len(self._chain_nms)
 
-    def _init_metadata(self):
-        """Initialize metadata."""
-        # Process metadata CSV with different filtering criterions.
-        filter_conf = self.config.filtering
-        pdb_chain_metadata = pd.read_csv(self.config.metadata_path)
-        self.raw_pdb_chain_metadata = pdb_chain_metadata
-        
-        if filter_conf.max_len is not None:
-            pdb_chain_metadata = pdb_chain_metadata[pdb_chain_metadata.modeled_seq_len <= filter_conf.max_len]
-        if filter_conf.min_len is not None:
-            pdb_chain_metadata = pdb_chain_metadata[pdb_chain_metadata.modeled_seq_len >= filter_conf.min_len]
-        if filter_conf.max_helix_percent is not None:
-            pdb_chain_metadata = pdb_chain_metadata[
-                pdb_chain_metadata.helix_percent < filter_conf.max_helix_percent]
-        if filter_conf.max_loop_percent is not None:
-            pdb_chain_metadata = pdb_chain_metadata[
-                pdb_chain_metadata.coil_percent < filter_conf.max_loop_percent]
-        if filter_conf.min_beta_percent is not None:
-            pdb_chain_metadata = pdb_chain_metadata[
-                pdb_chain_metadata.strand_percent > filter_conf.min_beta_percent]
-        
-        self._create_split_train_val_test(pdb_chain_metadata)
-        
-
-    def _create_split_train_val_test(self, pdb_chain_metadata):
-        """ Split train, val and test sets of single chains
-        train - OpenProteinSet
-        val - random single chains out of OPS
-        test - random single chains after 2021-12
-        """
-        # filter out pdb-chains in OpenProteinSet
-        pdb_chain_metadata_OPS = pdb_chain_metadata[pdb_chain_metadata.auth_chain_in_OPS == True]
-        pdb_chain_metadata_not_OPS = pdb_chain_metadata[pdb_chain_metadata.auth_chain_in_OPS == False]
-        
-        # Training set
-        self.train_metadata = pdb_chain_metadata_OPS
-        self._log.info(
-            f'TRaining data size (OPS pdb-chains): {len(self.train_metadata)}')
-        
-        # Test set
-        
-
-        # Validation set
-        self.eval_metadata = pdb_chain_metadata_not_OPS.sample(len(pdb_chain_metadata_not_OPS)//8,replace=False, random_state=self.config.seed).sort_values('modeled_seq_len', ascending=False)
-        self.eval_pdb_chain_ids = self.eval_metadata.pdb_auth_chain.to_list()
-        self._log.info(
-            f'VALidation data size (pdb_chains): {len(self.eval_metadata)}')
-
-    def _split_by_modeled_seqLen(self, metadata_df, num_len_bins, samples_per_len_bin):
-        """subset split based on modeled seq len"""
-        all_lengths = np.sort(metadata_df.modeled_seq_len.unique())
-        length_indices = (len(all_lengths) - 1) * np.linspace(
-            0.0, 1.0, num_len_bins)
-        length_indices = length_indices.astype(int)
-        eval_lengths = all_lengths[length_indices]
-        sub_df = metadata_df[metadata_df.modeled_seq_len.isin(eval_lengths)]
-        # Fix a random seed to get the same split each time.
-        sub_df = sub_df.groupby('modeled_seq_len').sample(
-            samples_per_len_bin, replace=True, random_state=self.config.seed)
-        sub_df = sub_df.sort_values('modeled_seq_len', ascending=False)
-        return sub_df
-        
 
     def idx_to_chain_nm(self, idx):
         return self._chain_nms[idx]
@@ -326,16 +258,11 @@ class ThreeModalityDataModule(LightningDataModule):
 
     def __init__(
         self,
-        data_dir: str = "data/",
-        train_val_test_split: Tuple[int, int, int] = (55_000, 5_000, 10_000),
-        batch_size: int = 64,
-        num_workers: int = 0,
-        pin_memory: bool = False,
+        config: DictConfig = None,
+        mode: str = 'fit',
     ) -> None:
         """Initialize a `ThreeModalityDataModule`.
 
-        :param data_dir: The data directory. Defaults to `"data/"`.
-        :param train_val_test_split: The train, validation and test split. Defaults to `(55_000, 5_000, 10_000)`.
         :param batch_size: The batch size. Defaults to `64`.
         :param num_workers: The number of workers. Defaults to `0`.
         :param pin_memory: Whether to pin memory. Defaults to `False`.
@@ -346,24 +273,94 @@ class ThreeModalityDataModule(LightningDataModule):
         # also ensures init params will be stored in ckpt
         self.save_hyperparameters(logger=False)
 
-        # data transformations
-        self.transforms = transforms.Compose(
-            [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
-        )
-
         self.data_train: Optional[Dataset] = None
         self.data_val: Optional[Dataset] = None
         self.data_test: Optional[Dataset] = None
 
-        self.batch_size_per_device = batch_size
+        self.config = config
+        self.mode = mode
 
-    @property
-    def num_classes(self) -> int:
-        """Get the number of classes.
+        self.supported_exts = [".cif"]
+        valid_modes = ["fit", "val", "test", "predict"]
 
-        :return: The number of MNIST classes (10).
+        if(mode not in valid_modes):
+            raise ValueError(f'mode must be one of {valid_modes}')
+        
+        # init metadata and split for train, val and test
+        if self.mode not in ['predict']:
+            self._init_metadata(self.config.split_strategy)
+            if self.mode == 'fit':
+                self.target_metadata = self.train_metadata
+            elif self.mode == 'val':
+                self.target_metadata = self.val_metadata
+            elif self.mode == 'test':
+                self.target_metadata = self.test_metadata
+
+    def _init_metadata(self, split_strategy: str='default'):
+        """Initialize metadata."""
+        # Process metadata CSV with different filtering criterions.
+        filter_conf = self.config.filtering
+        pdb_chain_metadata = pd.read_csv(self.config.metadata_path)
+        self.raw_pdb_chain_metadata = pdb_chain_metadata
+        
+        if filter_conf.max_len is not None:
+            pdb_chain_metadata = pdb_chain_metadata[pdb_chain_metadata.modeled_seq_len <= filter_conf.max_len]
+        if filter_conf.min_len is not None:
+            pdb_chain_metadata = pdb_chain_metadata[pdb_chain_metadata.modeled_seq_len >= filter_conf.min_len]
+        if filter_conf.max_helix_percent is not None:
+            pdb_chain_metadata = pdb_chain_metadata[
+                pdb_chain_metadata.helix_percent < filter_conf.max_helix_percent]
+        if filter_conf.max_loop_percent is not None:
+            pdb_chain_metadata = pdb_chain_metadata[
+                pdb_chain_metadata.coil_percent < filter_conf.max_loop_percent]
+        if filter_conf.min_beta_percent is not None:
+            pdb_chain_metadata = pdb_chain_metadata[
+                pdb_chain_metadata.strand_percent > filter_conf.min_beta_percent]
+        # split metadata
+        if split_strategy == 'default':
+            self._create_split_train_val_test(pdb_chain_metadata)
+
+    def _create_split_train_val_test(self, pdb_chain_metadata):
+        """ Split train, val and test sets of single chains
+        train - OpenProteinSet
+        val - random single chains out of OPS
+        test - random single chains after 2021-12
         """
-        return 10
+        # filter out pdb-chains in OpenProteinSet
+        pdb_chain_metadata_OPS = pdb_chain_metadata[pdb_chain_metadata.auth_chain_in_OPS == True]
+        pdb_chain_metadata_not_OPS = pdb_chain_metadata[pdb_chain_metadata.auth_chain_in_OPS == False]
+        
+        # Training set
+        self.train_metadata = pdb_chain_metadata_OPS
+        self._log.info(
+            f'TRaining data size (OPS pdb-chains): {len(self.train_metadata)}')
+        
+        # Test set
+        pdb_after_OPS = pdb_chain_metadata_not_OPS[pdb_chain_metadata_not_OPS.release_date > '2021-12-31']
+        self.test_metadata = pdb_after_OPS.sample(len(pdb_after_OPS)//5, replace=False, random_state=self.config.seed).sort_values('modeled_seq_len', ascending=False)
+        self.test_pdb_chain_ids = self.test_metadata.pdb_auth_chain.to_list()
+        self._log.info(
+            f'TEst data size (pdb_chains): {len(self.test_metadata)}')
+
+        # Validation set
+        self.val_metadata = pdb_chain_metadata_not_OPS[~pdb_chain_metadata_not_OPS.pdb_auth_chain.isin(self.test_pdb_chain_ids)].sample(len(pdb_chain_metadata_not_OPS)//10, replace=False, random_state=self.config.seed).sort_values('modeled_seq_len', ascending=False)
+        self.val_pdb_chain_ids = self.val_metadata.pdb_auth_chain.to_list()
+        self._log.info(
+            f'VALidation data size (pdb_chains): {len(self.val_metadata)}')
+
+    def _split_by_modeled_seqLen(self, metadata_df, num_len_bins, samples_per_len_bin):
+        """subset split based on modeled seq len"""
+        all_lengths = np.sort(metadata_df.modeled_seq_len.unique())
+        length_indices = (len(all_lengths) - 1) * np.linspace(
+            0.0, 1.0, num_len_bins)
+        length_indices = length_indices.astype(int)
+        eval_lengths = all_lengths[length_indices]
+        sub_df = metadata_df[metadata_df.modeled_seq_len.isin(eval_lengths)]
+        # Fix a random seed to get the same split each time.
+        sub_df = sub_df.groupby('modeled_seq_len').sample(
+            samples_per_len_bin, replace=True, random_state=self.config.seed)
+        sub_df = sub_df.sort_values('modeled_seq_len', ascending=False)
+        return sub_df
 
     def prepare_data(self) -> None:
         """Download data if needed. Lightning ensures that `self.prepare_data()` is called only
@@ -373,8 +370,7 @@ class ThreeModalityDataModule(LightningDataModule):
 
         Do not use it to assign state (self.x = y).
         """
-        MNIST(self.hparams.data_dir, train=True, download=True)
-        MNIST(self.hparams.data_dir, train=False, download=True)
+        return
 
 
     def setup(self, stage: Optional[str] = None) -> None:
