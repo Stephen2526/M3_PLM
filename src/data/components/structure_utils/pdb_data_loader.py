@@ -153,6 +153,8 @@ class PdbDataset(data.Dataset):
 
         # Re-number residue indices for each chain such that it starts from 1.
         # Randomize chain indices.
+        # chain_idx: 1 1 1 1 1 3 3 3 6 6 6 -> 3 3 3 3 3 6 6 6 1 1 1
+        # resi_idx:  0 1 2 3 4 6 7 8 9 10 11 -> 1 2 3 4 5 1 2 3 1 2 3
         chain_idx = processed_feats["chain_index"]
         res_idx = processed_feats['residue_index']
         new_res_idx = np.zeros_like(res_idx)

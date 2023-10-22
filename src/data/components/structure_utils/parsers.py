@@ -98,15 +98,15 @@ def process_chain(chain: Chain, auth_chain_id: Union[str,int], dssp_obj: DSSP=No
 
     return ProteinChain(
         atom_positions=np.array(atom_positions),
-        atom_mask=np.array(atom_mask),
-        aatype=np.array(aatype),
+        atom_mask=np.array(atom_mask,dtype=np.uint8),
+        aatype=np.array(aatype,dtype=np.uint8),
         seqres=resi_str,
         res_type3=resi_type3,
         residue_auth_index=residue_auth_index,
         auth_chain_id=auth_chain_id,
         b_factors=np.array(b_factors),
-        sse3_type_ids=np.array(sse3_ids, dtype=np.int8) if len(sse3_ids) > 0 else None,
-        sse8_type_ids=np.array(sse8_ids, dtype=np.int8) if len(sse8_ids) > 0 else None,
+        sse3_type_ids=np.array(sse3_ids, dtype=np.uint8) if len(sse3_ids) > 0 else None,
+        sse8_type_ids=np.array(sse8_ids, dtype=np.uint8) if len(sse8_ids) > 0 else None,
         depth_resi=np.array(resi_depth) if len(resi_depth) > 0 else None,
         depth_ca_atom=np.array(ca_atom_depth) if len(ca_atom_depth) > 0 else None,
         )

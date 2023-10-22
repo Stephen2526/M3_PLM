@@ -20,7 +20,11 @@ from Bio.PDB import MMCIFParser, PDBIO
 from Bio.PDB.DSSP import DSSP
 from Bio.PDB.ResidueDepth import ResidueDepth
 
-from src.data.components.structure_utils import mmcif_parsing, residue_constants, errors, parsers
+from src.data.components.structure_utils import (
+    mmcif_parsing,
+    residue_constants,
+    errors,
+    parsers)
 import src.data.components.structure_utils.utils as du
 from src.data.components.openfold.data.parsers import parse_hhr
 
@@ -256,7 +260,7 @@ def process_mmcif_save_pkl_4openProteinSet(
         min_modeled_idx = np.min(modeled_idx)
         max_modeled_idx = np.max(modeled_idx)
         modeled_seq_len = int(max_modeled_idx - min_modeled_idx + 1)
-        chain_prot.modeled_idx = modeled_idx
+        chain_prot.modeled_idx = modeled_idx.astype(np.uint16)
         if chain_prot.aatype.shape[0] > max_len:
             raise errors.LengthError(
                 f"Too long {chain_prot.aatype.shape[0]}")

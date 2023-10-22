@@ -68,31 +68,32 @@ class ProteinChain:
 
   # Cartesian coordinates of atoms in angstroms. The atom types correspond to
   # residue_constants.atom_types, i.e. the first three are N, CA, CB.
-  atom_positions: np.ndarray = None  # [num_res, num_atom_type, 3]
-  bb_position: np.ndarray = None
+  atom_positions: np.ndarray = None  # [num_res, num_atom_type, 3], float64
+  bb_positions: np.ndarray = None # CA position, [num_res, 3], float64
 
   # Amino-acid type for each residue represented as an integer between 0 and
   # 20, where 20 is 'X'.
-  aatype: np.ndarray = None  # [num_res]
+  aatype: np.ndarray = None  # [num_res,] np.uint8
 
   # Primary sequence 1 letter and 3 letters
   seqres: str = None
-  res_type3: list = None
+  res_type3: list[str] = None
 
-  # Tokenized homologous seqs from MSA
-  homoSeq_aatype: list[list] = None # [num_homos, seq_len]
+  # Tokenized homologous seq ids {0-20} queried from MSAs
+  homoSeq_aatype: list[list] = None # w/o target seq, [num_homos, homo_seq_len]
 
-  # structure templates
-  pdb_temp: list[str] = None # [num_temps]
+  # structure templates (pdb + auth_chain)
+  pdb_temp: list[str] = None # [num_temps,]
 
   # Binary float mask to indicate presence of a particular atom. 1.0 if an atom
   # is present and 0.0 if not. This should be used for loss masking.
-  atom_mask: np.ndarray = None  # [num_res, num_atom_type]
-  bb_mask: np.ndarray = None
-  modeled_idx: np.ndarray = None
+  atom_mask: np.ndarray = None  # [num_res, num_atom_type], np.uint8
+  bb_mask: np.ndarray = None # CA, [num_res,], np.uint8
+  modeled_idx: np.ndarray = None # [num_res,], np.uint16
 
   # Residue index as used in PDB. It is not necessarily continuous or 0-indexed.
-  residue_auth_index: list[tuple] = None  # [num_res]
+  # (hetero flag, sequence identifier, insertion code)
+  residue_auth_index: list[tuple] = None  # [num_res,]
 
   # author defined chain id
   auth_chain_id: str = None
@@ -100,13 +101,13 @@ class ProteinChain:
   # B-factors, or temperature factors, of each residue (in sq. angstroms units),
   # representing the displacement of the residue from its ground truth mean
   # value.
-  b_factors: np.ndarray = None  # [num_res, num_atom_type]
+  b_factors: np.ndarray = None  # [num_res, num_atom_type], np.float64
 
   # SSE contacts
   sse_contacts: collections.defaultdict(dict) = None
 
   # SSE type (3 class) for each residue represented as {0,1,2}
-  sse3_type_ids: np.ndarray = None # [num_res]
+  sse3_type_ids: np.ndarray = None # [num_res], np.uint8
 
   # SSE type (8 class) for each residue represented as a digit in 0-7
   # H: Alpha helix (4-12)
@@ -117,13 +118,13 @@ class ProteinChain:
   # T: Turn
   # S: Bend
   # -: None
-  sse8_type_ids: np.ndarray = None # [num_res]
+  sse8_type_ids: np.ndarray = None # [num_res], np.uint8
 
   # depth value for each residue in the unit of \AA
-  depth_resi: np.ndarray = None # [num_res]
+  depth_resi: np.ndarray = None # [num_res], np.float64
 
   # depth value for each CA atom in the unit of \AA
-  depth_ca_atom: np.ndarray = None # [num_res]    
+  depth_ca_atom: np.ndarray = None # [num_res], np.float64
 
 @dataclasses.dataclass(frozen=True)
 class ProteinModel:
