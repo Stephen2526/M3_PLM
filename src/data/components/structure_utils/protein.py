@@ -80,7 +80,9 @@ class ProteinChain:
   res_type3: list[str] = None
 
   # Tokenized homologous seq ids {0-20} queried from MSAs
-  homoSeq_aatype: list[list] = None # w/o target seq, [num_homos, homo_seq_len]
+  homoSeq_aatype_ur90: list[list] = None # w/o target seq, [num_homos, homo_seq_len]
+  homoSeq_aatype_bfd: list[list] = None # w/o target seq, [num_homos, homo_seq_len]
+  homoSeq_aatype_mgnify: list[list] = None # w/o target seq, [num_homos, homo_seq_len]
 
   # structure templates (pdb + auth_chain)
   pdb_temp: list[str] = None # [num_temps,]
