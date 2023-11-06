@@ -1,5 +1,5 @@
-re_submit=(87 13 14 90 60)
-for i in `seq 101 200` #"${re_submit[@]}"
+re_submit=(150)
+for i in "${re_submit[@]}" #`seq 101 200`
 do
 echo "#!/bin/bash
 ##ENVIRONMENT SETTINGS; CHANGE WITH CAUTION
@@ -7,10 +7,10 @@ echo "#!/bin/bash
 #SBATCH --get-user-env=L             #Replicate login environment
 
 ##NECESSARY JOB SPECIFICATIONS
-#SBATCH --time=24:00:00
+#SBATCH --time=72:00:00
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=28
-#SBATCH --mem=55G
+#SBATCH --ntasks-per-node=16
+#SBATCH --mem=110G
 #####SBATCH --exclusive
 #####SBATCH --gres=gpu:2
 #####SBATCH --partition=gpu
