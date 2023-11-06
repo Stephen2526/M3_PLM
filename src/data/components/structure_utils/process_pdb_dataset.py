@@ -16,7 +16,7 @@ import time
 from tqdm import tqdm
 import numpy as np
 import mdtraj as md
-from Bio.PDB import MMCIFParser, PDBIO
+from Bio.PDB import MMCIFParser, PDBIO, Select
 from Bio.PDB.DSSP import DSSP
 from Bio.PDB.ResidueDepth import ResidueDepth
 
@@ -128,6 +128,7 @@ def _retrieve_mmcif_files_4OpenProteinSet(
             # Don't process all files for debugging
             break
     print(f'Processing {len(all_mmcif_paths)} files out of {total_num_files}', flush=True)
+    random.shuffle(all_mmcif_paths)
     return all_mmcif_paths
 
 def process_mmcif_save_pkl_4openProteinSet(
@@ -329,6 +330,12 @@ def process_mmcif_save_pkl_4openProteinSet(
     #complex_feats = du.concat_np_features(struct_feats, False)
 
     try:
+        class FirstModelSelect(Select):
+            def accept_model(self, model):
+                if model.id == 0:
+                    return 1
+                else:
+                    return 0
         # Workaround for MDtraj not supporting mmcif in their latest release.
         # MDtraj source does support mmcif https://github.com/mdtraj/mdtraj/issues/652
         # We temporarily save the mmcif as a pdb and delete it after running mdtraj.
@@ -337,7 +344,7 @@ def process_mmcif_save_pkl_4openProteinSet(
         io = PDBIO()
         io.set_structure(struc)
         pdb_path = mmcif_path.replace('.cif', '.pdb')
-        io.save(pdb_path)
+        io.save(pdb_path, FirstModelSelect())
 
         # MDtraj
         traj = md.load(pdb_path)
@@ -571,6 +578,18 @@ def process_fn(
         if verbose:
             print(f'Failed {mmcif_path}: {e}', flush=True)
 
+def combine_sub_metas(metadata_path: str):
+    """Combine metadata csv files
+    """
+    metadata_list = []
+    for i in range(1, 201):
+        sub_meta = pd.read_csv(f"{metadata_path}/metadata_{i}.csv",header=0,delimiter='\t')
+        metadata_list.append(sub_meta)
+    all_meta = pd.concat(metadata_list,ignore_index=True)
+    all_meta.drop_duplicates().to_csv(f"{metadata_path}/metadata_all.csv",sep='\t',index=False)
+    print(f"In total: {len(all_meta)} record rows")
+    return
+
 
 def main(args):
     # Get all mmcif files to read.
@@ -603,6 +622,7 @@ def main(args):
             tmp_dir=tmp_dir, 
             PTGL_path=args.PTGL_path,
             OpenProtein_path=args.OpenProtein_path)
+        print(f'Finished processing {total_num_paths} pdbs')
     else:
         _process_fn = fn.partial(
             process_fn,
@@ -624,10 +644,11 @@ def main(args):
             if len(x) > 0:
                 succeeded += 1
                 all_metadata.extend(x)
+        print(f'Finished processing {succeeded}/{total_num_paths} pdbs')
     metadata_df = pd.DataFrame(all_metadata)
     metadata_df.to_csv(metadata_path, sep='\t', index=False)
-    print(
-        f'Finished processing {succeeded}/{total_num_paths} pdbs, total {len(all_metadata)} chains')
+    print(f'Total {len(all_metadata)} chains')
+    
 
 
 if __name__ == "__main__":
@@ -636,3 +657,4 @@ if __name__ == "__main__":
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     args = parser.parse_args()
     main(args)
+    #combine_sub_metas('/scratch/user/sunyuanfei/Projects/M3_PLM/data/pdb_pickles')
