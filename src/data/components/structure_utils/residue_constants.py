@@ -16,7 +16,7 @@
 
 import collections
 import functools
-import os,random
+import os,random,re
 from typing import List, Mapping, Tuple
 
 import numpy as np
@@ -542,7 +542,8 @@ unk_restype_index = restype_num  # Catch-all index for unknown restypes.
 restypes_with_x = restypes + ['X']
 restype_order_with_x = {restype: i for i, restype in enumerate(restypes_with_x)}
 
-
+restypes_with_special_tokens = ['[CLS]','[SEP]','[STA]','[END]','[MASK]','[UNK]','[PAD]'] + restypes_with_x
+restype_order_with_special_tokens = {restype: i for i, restype in enumerate(restypes_with_special_tokens)}
 
 def sequence_to_onehot(
     sequence: str,
@@ -595,6 +596,9 @@ SS8_id2char = {i: ss_type for i, ss_type in enumerate(SS8_types)}
 SS3_char2id = {ss_type: i for i, ss_type in enumerate(SS3_types)}
 SS3_id2char = {i: ss_type for i, ss_type in enumerate(SS3_types)}
 
+# the whole set: AA, SS8 and special tokens
+aa_ss8_with_special_tokens = ['[CLS]','[SEP]','[STA]','[END]','[MKAA]','[MKSS]','[UNK]','[PAD]'] + restypes_with_x + ['g', 'i', 'h', 'b', 'e', 't', 's', '-']
+aa_ss8_with_special_tokens_map = {restype: i for i, restype in enumerate(aa_ss8_with_special_tokens)}
 
 restype_1to3 = {
     'A': 'ALA',
@@ -653,6 +657,21 @@ def ambiguous_restype_1to1(input_restype: str):
     return 'C'
   elif input_restype == 'O':
     return 'X'
+
+def sequence_replace_single(sequence:str, char_to_replace:str, char_replacements:str):
+    char_replacements = list(char_replacements)
+    positions = [m.start() for m in re.finditer(char_to_replace, sequence)]
+    replacements = np.random.choice(a=char_replacements, size=len(positions), replace=True)
+    sequence=list(sequence)
+    for idx, position in enumerate(positions):
+        sequence[position]=replacements[idx]
+    return ''.join(sequence)
+
+def sequence_replace(sequences:list[str], char_to_replace:str, char_replacements:str):
+    """
+    Helper function that replaces all Amino Acids passsed in via char_to_replace (as a string of AAs) with Amino Acids sampled from char_replacements (also a string of eligible AAs).
+    """
+    return [sequence_replace_single(sequence, char_to_replace, char_replacements) for sequence in sequences]
 
 # The mapping here uses hhblits convention, so that B is mapped to D, J and O
 # are mapped to X, U is mapped to C, and Z is mapped to E. Other than that the

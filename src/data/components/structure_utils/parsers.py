@@ -51,7 +51,7 @@ def process_chain(chain: Chain, auth_chain_id: Union[str,int], dssp_obj: DSSP=No
     ca_atom_depth = []
     for res in chain:
         res_id = res.id #(hetero flag, sequence identifier, insertion code)
-        if res_id[0] != ' ':
+        if res_id[0] != ' ': # skip hetero residues
             continue
         res_name = res.resname
         #res_shortname = residue_constants.restype_3to1.get(res_name, 'X')
@@ -70,7 +70,10 @@ def process_chain(chain: Chain, auth_chain_id: Union[str,int], dssp_obj: DSSP=No
             mask[residue_constants.atom_order[atom.name]] = 1.
             res_b_factors[residue_constants.atom_order[atom.name]
                           ] = atom.bfactor
-                
+            ## add these if re-run data processing
+            # occupancy (number) – occupancy (0.0-1.0)
+            # pqr_charge (number) – atom charge
+            # radius (number) – atom radius
         aatype.append(restype_idx)
         resi_str += res_shortname
         resi_type3.append(res_name)

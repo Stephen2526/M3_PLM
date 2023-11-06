@@ -42,6 +42,7 @@ dependencies:
   - salilab::dssp=3.0.0
   - libboost=1.73.0
   - conda-forge::openjdk=11.0.*
+  - conda-forge::ml-collections
 
   # - scipy
   # - scikit-learn

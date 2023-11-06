@@ -1,0 +1,13 @@
+{
+  "bos_token": "[STA]",
+  "clean_up_tokenization_spaces": true,
+  "cls_token": "[CLS]",
+  "eos_token": "[END]",
+  "mask_token": "[MASK]",
+  "model_max_length": 1024,
+  "pad_token": "[PAD]",
+  "padding_side": "right",
+  "sep_token": "[SEP]",
+  "tokenizer_class": "PreTrainedTokenizerFast",
+  "unk_token": "[UNK]"
+}

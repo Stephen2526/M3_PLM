@@ -80,7 +80,7 @@ class ProteinChain:
   res_type3: list[str] = None
 
   # Tokenized homologous seq ids {0-20} queried from MSAs
-  homoSeq_aatype: list[list] = None # w/o target seq, [num_homos, homo_seq_len]
+  homoSeq_aatype: list[list[int]] = None # w/o target seq, [num_homos, homo_seq_len]
 
   # structure templates (pdb + auth_chain)
   pdb_temp: list[str] = None # [num_temps,]
@@ -120,7 +120,7 @@ class ProteinChain:
   # -: None
   sse8_type_ids: np.ndarray = None # [num_res], np.uint8
 
-  # depth value for each residue in the unit of \AA
+  # depth value for each residue (atom-averaged) in the unit of \AA
   depth_resi: np.ndarray = None # [num_res], np.float64
 
   # depth value for each CA atom in the unit of \AA
