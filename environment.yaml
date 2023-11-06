@@ -43,6 +43,7 @@ dependencies:
   - libboost=1.73.0
   - conda-forge::openjdk=11.0.*
   - conda-forge::ml-collections
+  - anaconda::absl-py
 
   # - scipy
   # - scikit-learn

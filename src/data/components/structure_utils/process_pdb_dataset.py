@@ -16,7 +16,7 @@ import time
 from tqdm import tqdm
 import numpy as np
 import mdtraj as md
-from Bio.PDB import MMCIFParser, PDBIO
+from Bio.PDB import MMCIFParser, PDBIO, Select
 from Bio.PDB.DSSP import DSSP
 from Bio.PDB.ResidueDepth import ResidueDepth
 
@@ -114,10 +114,10 @@ def _retrieve_mmcif_files(
 def _retrieve_mmcif_files_4OpenProteinSet(
         mmcif_dir: str, min_file_size: int=1000, debug: bool=False):
     """Set up all the mmcif files to read."""
-    print('Gathering mmCIF paths')
+    print('Gathering mmCIF paths', flush=True)
     total_num_files = 0
     all_mmcif_paths = []
-    mmcif_list = os.listdir(mmcif_dir)
+    mmcif_list = glob.glob(f"{mmcif_dir}/*.cif")
     random.shuffle(mmcif_list)
     for cif_fl in tqdm(mmcif_list):
         mmcif_path = os.path.join(mmcif_dir,cif_fl)
@@ -127,11 +127,12 @@ def _retrieve_mmcif_files_4OpenProteinSet(
         if debug and total_num_files >= 100:
             # Don't process all files for debugging
             break
-    print(f'Processing {len(all_mmcif_paths)} files out of {total_num_files}')
+    print(f'Processing {len(all_mmcif_paths)} files out of {total_num_files}', flush=True)
+    random.shuffle(all_mmcif_paths)
     return all_mmcif_paths
 
 def process_mmcif_save_pkl_4openProteinSet(
-        mmcif_path: str, write_dir: str, tmp_dir: str, PTGL_path: str, OpenProtein_path: str, max_resolution: int=5.0, max_len: int=2014):
+        mmcif_path: str, write_dir: str, tmp_dir: str, PTGL_path: str, OpenProtein_path: str, max_resolution: int=5.0, max_len: int=1024):
     """Processes MMCIF files into usable, smaller pickles.
     Reduces the repetitive calculation of Secondary Structure(& SSE interaction) and residue depth, as these information cannot be read from pdb file directly.
 
@@ -172,6 +173,7 @@ def process_mmcif_save_pkl_4openProteinSet(
         DataError if a known filtering rule is hit.
         All other errors are unexpected and are propogated.
     """
+    metadata_out = []
     metadata_shared = {}
     mmcif_name = os.path.basename(mmcif_path).replace('.cif', '').lower()
     metadata_shared['pdb_name_lower'] = mmcif_name
@@ -242,7 +244,7 @@ def process_mmcif_save_pkl_4openProteinSet(
         # SSE contacts
         SSE_contact_chains = du.run_PTGLtools(mmcif_name, mmcif_path, PTGL_path, f"{tmp_dir}/{mmcif_name}")
     except Exception as e:
-        raise errors.DataError(f'Exit DSSP/ResidueDepth/PTGL with error {e}')
+        raise errors.DataError(f'Exit DSSP/ResidueDepth/PTGL with error: {e}')
     
     # Extract features
     metadata_chains = []
@@ -250,8 +252,11 @@ def process_mmcif_save_pkl_4openProteinSet(
     
     for auth_chain_id, chain in struct_chains.items():
         metadata_tmp = {}
-        chain_prot = parsers.process_chain(chain, auth_chain_id, dssp_obj=dssp, resiDepth_obj=rd)
-        chain_prot = du.parse_chain_feats(chain_prot)
+        try:
+            chain_prot = parsers.process_chain(chain, auth_chain_id, dssp_obj=dssp, resiDepth_obj=rd)
+            chain_prot = du.parse_chain_feats(chain_prot)
+        except Exception as e:
+            raise errors.DataError(f'Exit chain feat processing with error: {e}')
         
         # find modeled indices
         modeled_idx = np.where(chain_prot.aatype != 20)[0]
@@ -282,26 +287,41 @@ def process_mmcif_save_pkl_4openProteinSet(
 
         OPS_exist = os.path.exists(f"{OpenProtein_path}/pdb/{mmcif_name}_{auth_chain_id}")
         if OPS_exist:
-            # MSA
-            msa_path = os.path.abspath(f"{OpenProtein_path}/pdb/{mmcif_name}_{auth_chain_id}/a3m/uniref90_hits.a3m")
-            pdbTemp_path = os.path.abspath(f"{OpenProtein_path}/pdb/{mmcif_name}_{auth_chain_id}/hhr/pdb70_hits.hhr")
-            rawSeq_ids, _ = du.parse_a3m_rawSeq(msa_path)
-            chain_prot.homoSeq_aatype = rawSeq_ids
             chain_in_OPS = True
+            # MSA
+            ur90_msa_path = os.path.abspath(f"{OpenProtein_path}/pdb/{mmcif_name}_{auth_chain_id}/a3m/uniref90_hits.a3m")
+            bfd_msa_path = os.path.abspath(f"{OpenProtein_path}/pdb/{mmcif_name}_{auth_chain_id}/a3m/bfd_uniclust_hits.a3m")
+            mgnify_msa_path = os.path.abspath(f"{OpenProtein_path}/pdb/{mmcif_name}_{auth_chain_id}/a3m/mgnify_hits.a3m")
+            ur90_a3m_path = ur90_msa_path if os.path.exists(ur90_msa_path) else None
+            bfd_a3m_path = bfd_msa_path if os.path.exists(bfd_msa_path) else None
+            mgnify_a3m_path = mgnify_msa_path if os.path.exists(mgnify_msa_path) else None
+
+            pdbTemp_path = os.path.abspath(f"{OpenProtein_path}/pdb/{mmcif_name}_{auth_chain_id}/hhr/pdb70_hits.hhr")
+            pdb70_temp_path = pdbTemp_path if os.path.exists(pdbTemp_path) else None
+            if ur90_a3m_path is not None:
+                rawSeq_ids, _ = du.parse_a3m_rawSeq(ur90_a3m_path)
+                chain_prot.homoSeq_aatype_ur90 = rawSeq_ids
+            if bfd_a3m_path is not None:
+                rawSeq_ids, _ = du.parse_a3m_rawSeq(bfd_a3m_path)
+                chain_prot.homoSeq_aatype_bfd = rawSeq_ids
+            if mgnify_a3m_path is not None:
+                rawSeq_ids, _ = du.parse_a3m_rawSeq(mgnify_a3m_path)
+                chain_prot.homoSeq_aatype_mgnify = rawSeq_ids
             
             # pdb templates
-            with open(pdbTemp_path,'r') as fp:
-                hhr_string = fp.read()
-            temp_hits = parse_hhr(hhr_string)
-            chain_prot.pdb_temp = [h.pdb_chain_id for h in temp_hits]
+            if pdb70_temp_path is not None:
+                with open(pdb70_temp_path,'r') as fp:
+                    hhr_string = fp.read()
+                temp_hits = parse_hhr(hhr_string)
+                chain_prot.pdb_temp = [h.pdb_chain_id for h in temp_hits]
         else:
-            msa_path = None
-            pdbTemp_path = None
+            ur90_a3m_path, bfd_a3m_path, mgnify_a3m_path = None, None, None
+            pdb70_temp_path = None
             chain_in_OPS = False
-            chain_prot.homoSeq_aatype = None
-            chain_prot.pdb_temp = None
-        metadata_tmp['msa_path'] = msa_path
-        metadata_tmp['pdb_temp_path'] = pdbTemp_path
+        metadata_tmp['msa_path_ur90'] = ur90_a3m_path
+        metadata_tmp['msa_path_bfd'] = bfd_a3m_path
+        metadata_tmp['msa_path_mgnify'] = mgnify_a3m_path
+        metadata_tmp['pdb_temp_path'] = pdb70_temp_path
         metadata_tmp['auth_chain_in_OPS'] = chain_in_OPS
         metadata_chains.append(metadata_tmp)
         # chain_dict = dataclasses.asdict(chain_prot) # convert to dict
@@ -310,6 +330,12 @@ def process_mmcif_save_pkl_4openProteinSet(
     #complex_feats = du.concat_np_features(struct_feats, False)
 
     try:
+        class FirstModelSelect(Select):
+            def accept_model(self, model):
+                if model.id == 0:
+                    return 1
+                else:
+                    return 0
         # Workaround for MDtraj not supporting mmcif in their latest release.
         # MDtraj source does support mmcif https://github.com/mdtraj/mdtraj/issues/652
         # We temporarily save the mmcif as a pdb and delete it after running mdtraj.
@@ -318,7 +344,7 @@ def process_mmcif_save_pkl_4openProteinSet(
         io = PDBIO()
         io.set_structure(struc)
         pdb_path = mmcif_path.replace('.cif', '.pdb')
-        io.save(pdb_path)
+        io.save(pdb_path, FirstModelSelect())
 
         # MDtraj
         traj = md.load(pdb_path)
@@ -339,7 +365,6 @@ def process_mmcif_save_pkl_4openProteinSet(
     metadata_shared['radius_gyration'] = pdb_rg
 
     # update chain-specfic metadata with shared entries
-    metadata_out =[]
     for meta_chain in metadata_chains:
         meta_chain.update(metadata_shared)
         metadata_out.append(meta_chain)
@@ -514,10 +539,10 @@ def process_serially(
                     max_resolution,
                     max_len)
             elapsed_time = time.time() - start_time
-            print(f'Finished {mmcif_path} in {elapsed_time:2.2f}s')
+            print(f'Finished {mmcif_path} in {elapsed_time:2.2f}s', flush=True)
             all_metadata.extend(metadata)
         except errors.DataError as e:
-            print(f'Failed {mmcif_path}: {e}')
+            print(f'Failed {mmcif_path}: {e}', flush=True)
     return all_metadata
 
 
@@ -547,11 +572,23 @@ def process_fn(
             max_len)
         elapsed_time = time.time() - start_time
         if verbose:
-            print(f'Finished {mmcif_path} in {elapsed_time:2.2f}s')
+            print(f'Finished {mmcif_path} in {elapsed_time:2.2f}s', flush=True)
         return metadata
     except errors.DataError as e:
         if verbose:
-            print(f'Failed {mmcif_path}: {e}')
+            print(f'Failed {mmcif_path}: {e}', flush=True)
+
+def combine_sub_metas(metadata_path: str):
+    """Combine metadata csv files
+    """
+    metadata_list = []
+    for i in range(1, 201):
+        sub_meta = pd.read_csv(f"{metadata_path}/metadata_{i}.csv",header=0,delimiter='\t')
+        metadata_list.append(sub_meta)
+    all_meta = pd.concat(metadata_list,ignore_index=True)
+    all_meta.drop_duplicates().to_csv(f"{metadata_path}/metadata_all.csv",sep='\t',index=False)
+    print(f"In total: {len(all_meta)} record rows")
+    return
 
 
 def main(args):
@@ -563,6 +600,7 @@ def main(args):
     total_num_paths = len(all_mmcif_paths)
     write_dir = args.write_dir
     tmp_dir = args.tmp_dir
+    sub_num = os.path.basename(args.mmcif_dir).split('_')[1]
     if not os.path.exists(write_dir):
         os.makedirs(write_dir)
     if not os.path.exists(tmp_dir):
@@ -570,7 +608,7 @@ def main(args):
     if args.debug:
         metadata_file_name = 'metadata_debug.csv'
     else:
-        metadata_file_name = 'metadata.csv'
+        metadata_file_name = f'metadata_{sub_num}.csv'
     metadata_path = os.path.join(write_dir, metadata_file_name)
     print(f'Files will be written to {write_dir}')
 
@@ -584,6 +622,7 @@ def main(args):
             tmp_dir=tmp_dir, 
             PTGL_path=args.PTGL_path,
             OpenProtein_path=args.OpenProtein_path)
+        print(f'Finished processing {total_num_paths} pdbs')
     else:
         _process_fn = fn.partial(
             process_fn,
@@ -598,14 +637,18 @@ def main(args):
         with mp.Pool() as pool:
             pool_metadata = pool.map(_process_fn, all_mmcif_paths)
         all_metadata = []
+        succeeded = 0
         for x in pool_metadata:
+            if x is None:
+                continue
             if len(x) > 0:
+                succeeded += 1
                 all_metadata.extend(x)
+        print(f'Finished processing {succeeded}/{total_num_paths} pdbs')
     metadata_df = pd.DataFrame(all_metadata)
     metadata_df.to_csv(metadata_path, sep='\t', index=False)
-    succeeded = len(all_metadata)
-    print(
-        f'Finished processing {succeeded}/{total_num_paths} files')
+    print(f'Total {len(all_metadata)} chains')
+    
 
 
 if __name__ == "__main__":
@@ -614,3 +657,4 @@ if __name__ == "__main__":
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     args = parser.parse_args()
     main(args)
+    #combine_sub_metas('/scratch/user/sunyuanfei/Projects/M3_PLM/data/pdb_pickles')
