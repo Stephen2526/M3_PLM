@@ -20,15 +20,20 @@ from operator import add
 import numpy as np
 import torch
 
-from openfold.config import NUM_RES, NUM_EXTRA_SEQ, NUM_TEMPLATES, NUM_MSA_SEQ
-from openfold.np import residue_constants as rc
-from openfold.utils.rigid_utils import Rotation, Rigid
-from openfold.utils.tensor_utils import (
+#from src.data.components.openfold.config import NUM_RES, NUM_EXTRA_SEQ, NUM_TEMPLATES, NUM_MSA_SEQ
+#from openfold.np import residue_constants as rc
+import src.data.components.structure_utils.residue_constants as rc
+from src.data.components.openfold.utils.rigid_utils import Rotation, Rigid
+from src.data.components.openfold.utils.tensor_utils import (
     tree_map,
     tensor_tree_map,
     batched_gather,
 )
 
+NUM_RES = "num residues placeholder"
+NUM_MSA_SEQ = "msa placeholder"
+NUM_EXTRA_SEQ = "extra msa placeholder"
+NUM_TEMPLATES = "num templates placeholder"
 
 MSA_FEATURE_NAMES = [
     "msa",

@@ -52,7 +52,7 @@ def process_chain(chain: Chain, auth_chain_id: Union[str,int], dssp_obj: DSSP=No
     ca_atom_depth = []
     for res in chain:
         res_id = res.id #(hetero flag, sequence identifier, insertion code)
-        if res_id[0] != ' ':
+        if res_id[0] != ' ': # skip hetero residues
             continue
         res_name = res.resname
         #res_shortname = residue_constants.restype_3to1.get(res_name, 'X')

@@ -1,0 +1,114 @@
+{
+  "version": "1.0",
+  "truncation": null,
+  "padding": null,
+  "added_tokens": [],
+  "normalizer": null,
+  "pre_tokenizer": {
+    "type": "Whitespace"
+  },
+  "post_processor": {
+    "type": "TemplateProcessing",
+    "single": [
+      {
+        "SpecialToken": {
+          "id": "[CLS]",
+          "type_id": 0
+        }
+      },
+      {
+        "Sequence": {
+          "id": "A",
+          "type_id": 0
+        }
+      }
+    ],
+    "pair": [
+      {
+        "SpecialToken": {
+          "id": "[CLS]",
+          "type_id": 0
+        }
+      },
+      {
+        "Sequence": {
+          "id": "A",
+          "type_id": 0
+        }
+      },
+      {
+        "SpecialToken": {
+          "id": "[SEP]",
+          "type_id": 0
+        }
+      },
+      {
+        "Sequence": {
+          "id": "B",
+          "type_id": 1
+        }
+      }
+    ],
+    "special_tokens": {
+      "[CLS]": {
+        "id": "[CLS]",
+        "ids": [
+          0
+        ],
+        "tokens": [
+          "[CLS]"
+        ]
+      },
+      "[SEP]": {
+        "id": "[SEP]",
+        "ids": [
+          1
+        ],
+        "tokens": [
+          "[SEP]"
+        ]
+      }
+    }
+  },
+  "decoder": null,
+  "model": {
+    "type": "BPE",
+    "dropout": null,
+    "unk_token": "[UNK]",
+    "continuing_subword_prefix": null,
+    "end_of_word_suffix": null,
+    "fuse_unk": false,
+    "byte_fallback": false,
+    "vocab": {
+      "[CLS]": 0,
+      "[SEP]": 1,
+      "[STA]": 2,
+      "[END]": 3,
+      "[MASK]": 4,
+      "[UNK]": 5,
+      "[PAD]": 6,
+      "A": 7,
+      "R": 8,
+      "N": 9,
+      "D": 10,
+      "C": 11,
+      "Q": 12,
+      "E": 13,
+      "G": 14,
+      "H": 15,
+      "I": 16,
+      "L": 17,
+      "K": 18,
+      "M": 19,
+      "F": 20,
+      "P": 21,
+      "S": 22,
+      "T": 23,
+      "W": 24,
+      "Y": 25,
+      "V": 26,
+      "X": 27
+    },
+    "merges": []
+  }
+}
