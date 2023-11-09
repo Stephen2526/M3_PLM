@@ -103,7 +103,8 @@ class ProteinChain:
   # B-factors, or temperature factors, of each residue (in sq. angstroms units),
   # representing the displacement of the residue from its ground truth mean
   # value.
-  b_factors: np.ndarray = None  # [num_res, num_atom_type], np.float64
+  b_factors: np.ndarray = None # [num_res, num_atom_type], np.float64
+  occupancy: np.ndarray = None # [num_res, num_atom_type], np.float64
 
   # SSE contacts
   sse_contacts: collections.defaultdict(dict) = None

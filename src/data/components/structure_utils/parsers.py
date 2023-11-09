@@ -45,6 +45,7 @@ def process_chain(chain: Chain, auth_chain_id: Union[str,int], dssp_obj: DSSP=No
     atom_mask = []
     residue_auth_index = []
     b_factors = []
+    occupancy = []
     sse3_ids = []
     sse8_ids = []
     resi_depth = []
@@ -63,6 +64,7 @@ def process_chain(chain: Chain, auth_chain_id: Union[str,int], dssp_obj: DSSP=No
         pos = np.zeros((residue_constants.atom_type_num, 3))
         mask = np.zeros((residue_constants.atom_type_num,))
         res_b_factors = np.zeros((residue_constants.atom_type_num,))
+        res_occupancy = np.ones((residue_constants.atom_type_num,), dtype=np.float16) * -1
         for atom in res:
             if atom.name not in residue_constants.atom_types:
                 continue
@@ -70,6 +72,7 @@ def process_chain(chain: Chain, auth_chain_id: Union[str,int], dssp_obj: DSSP=No
             mask[residue_constants.atom_order[atom.name]] = 1.
             res_b_factors[residue_constants.atom_order[atom.name]
                           ] = atom.bfactor
+            res_occupancy[residue_constants.atom_order[atom.name]] = atom.occupancy
                 
         aatype.append(restype_idx)
         resi_str += res_shortname
@@ -78,6 +81,7 @@ def process_chain(chain: Chain, auth_chain_id: Union[str,int], dssp_obj: DSSP=No
         atom_mask.append(mask)
         residue_auth_index.append(res_id)
         b_factors.append(res_b_factors)
+        occupancy.append(res_occupancy)
 
         # process DSSP and ResidueDepth outputs
         if process_dssp_rd:
@@ -105,6 +109,7 @@ def process_chain(chain: Chain, auth_chain_id: Union[str,int], dssp_obj: DSSP=No
         residue_auth_index=residue_auth_index,
         auth_chain_id=auth_chain_id,
         b_factors=np.array(b_factors),
+        occupancy = np.array(occupancy),
         sse3_type_ids=np.array(sse3_ids, dtype=np.uint8) if len(sse3_ids) > 0 else None,
         sse8_type_ids=np.array(sse8_ids, dtype=np.uint8) if len(sse8_ids) > 0 else None,
         depth_resi=np.array(resi_depth) if len(resi_depth) > 0 else None,
