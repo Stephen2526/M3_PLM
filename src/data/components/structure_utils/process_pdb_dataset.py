@@ -10,12 +10,13 @@ import argparse, glob, random
 import dataclasses
 import functools as fn
 import pandas as pd
-import os
+import os,re
 import multiprocessing as mp
 import time
 from tqdm import tqdm
 import numpy as np
 import mdtraj as md
+import matplotlib.pyplot as plt
 from Bio.PDB import MMCIFParser, PDBIO, Select
 from Bio.PDB.DSSP import DSSP
 from Bio.PDB.ResidueDepth import ResidueDepth
@@ -87,6 +88,10 @@ parser.add_argument(
     '--OpenProtein_path',
     help='Path to OpenProteinSet data files.',
     type=str)
+parser.add_argument(
+    '--task',
+    help='the task to run.',
+    type=str)
 
 def _retrieve_mmcif_files(
         mmcif_dir: str, max_file_size: int, min_file_size: int, debug: bool):
@@ -146,27 +151,29 @@ def process_mmcif_save_pkl_4openProteinSet(
         Saves processed protein to pickle and returns metadata.
         
     MetaData keys:
-        pdb_name_lower (str): 106m
-        pkl_file_path (str): /path/to/OpenProteinSet/pdb_pickle/106m.pkl
-        mmcif_file_path (str): /path/to/OpenProteinSet/pdb_mmcif/106m.cif
-        oligomeric_count (str): 1:...
-        oligomeric_detail (str): monomeric:...
-        resolution (float): 1.99
-        release_date (str): 1998-04-08
-        structure_method (str): x-ray diffraction:...
-        num_chains (int): 1
-        pdb_auth_chain (str): 106m_A
-        quaternary_category (str): homomer
+        pdb_auth_chain  (str): 106m_A
         seq_len (int): 154
         modeled_seq_len (int): 150
         coil_percent (float): 0.3
         helix_percent (float): 0.4
         strand_percent (float): 0.3
-        radius_gyration (float): 5.2
-        msa_path (str): /path/to/OpenProteinSet/pdb/106m_A/a3m/uniref90_hits.a3m or None
+        msa_path_ur90 (str): /path/to/OpenProteinSet/pdb/106m_A/a3m/uniref90_hits.a3m or None
+        msa_path_bfd (str): /path/to/OpenProteinSet/pdb/106m_A/a3m/bfd_hits.a3m or None
+        msa_path_mgnify (str): /path/to/OpenProteinSet/pdb/106m_A/a3m/mgnify_hits.a3m or None
         pdb_temp_path (str): /path/to/OpenProteinSet/pdb/106m_A/hhr/pdb70_hits.hhr or None
         auth_chain_in_OPS (bool): True or False
-    
+        pdb_name_lower (str): 106m
+        pkl_file_path (str): /path/to/OpenProteinSet/pdb_pickle/106m.pkl
+        mmcif_file_path (str): /path/to/OpenProteinSet/pdb_mmcif/106m.cif
+        oligomeric_count (str): 1:... 
+        oligomeric_detail (str): monomeric:...
+        resolution (float): 1.99
+        release_date (str): 1998-04-08
+        structure_method (str): x-ray diffraction:...
+        quaternary_category  (str): homomer
+        num_chains  (int): 1
+        radius_gyration (float): 5.2
+
     Pickle complex features: refer to protein.ProteinChain
 
     Raises:
@@ -590,6 +597,122 @@ def combine_sub_metas(metadata_path: str):
     print(f"In total: {len(all_meta)} record rows")
     return
 
+def main_append_extra_feat_to_pkl(args):
+    """Append extra atom feature: occupancy
+    """
+    sub_id = re.split('_', os.path.basename(args.mmcif_dir))[-1]
+    meta_df = pd.read_csv(f"{args.write_dir}/metadata_{sub_id}.csv",header=0,delimiter='\t')
+    pdb_meta_df = meta_df.loc[:,['pdb_name_lower','pkl_file_path','mmcif_file_path']].drop_duplicates().reset_index()
+
+    _process_fn = fn.partial(
+            atom_occupancy,
+            metadata=pdb_meta_df,
+            debug=False)
+    # Uses max number of available cores.
+    with mp.Pool() as pool:
+        pool_pdb_names = pool.map(_process_fn, list(range(len(pdb_meta_df))))
+    print(f"Successfully updates pickples of {len(pool_pdb_names)} PDBs")
+    return
+
+def main_check_label_histogram(args):
+    """main function for label histogram checking
+    """
+    sub_id = re.split('_', os.path.basename(args.mmcif_dir))[-1]
+    meta_df = pd.read_csv(f"{args.write_dir}/metadata_{sub_id}.csv",header=0,delimiter='\t')
+    pdb_meta_df = meta_df.loc[:,['pdb_auth_chain','pkl_file_path']].drop_duplicates().reset_index()
+
+    _process_fn = fn.partial(
+            histogram_labels,
+            metadata=pdb_meta_df,)
+    # Uses max number of available cores.
+    with mp.Pool() as pool:
+        label_dfs = pool.map(_process_fn, list(range(len(pdb_meta_df))))
+    
+    whole_label_df = pd.concat(label_dfs, ignore_index=True)
+    write_path = os.path.dirname(args.write_dir)
+    cols_focus = ['depth_resi','b_factor_weighted']
+    sense_of_values(whole_label_df,cols=cols_focus,save_dir=f"{write_path}/label_histogram",bins=32)
+    whole_label_df.to_csv(f"{write_path}/label_histogram/{'-'.join(cols_focus)}.csv",index=False)
+    return
+
+def sense_of_values(df: pd.DataFrame, cols: list, save_dir: str, bins: int=32):
+    df.loc[:,cols].quantile(q=[0.,0.3,0.5,0.7,1.0],interpolation='linear').to_csv(f"{save_dir}/quantile_{'-'.join(cols)}.csv",index=True)
+    for col_nm in cols:
+        fig, ax = plt.subplots()
+        plt.hist(df.loc[:,col_nm].to_numpy(),bins=bins)
+        fig.savefig(f'{save_dir}/{col_nm}.png')
+        plt.clf()
+    return
+
+def atom_occupancy(row_idx: int, metadata: pd.DataFrame, debug: bool=False):
+    meta_row = metadata.iloc[row_idx]
+    pdb_name_lower = meta_row['pdb_name_lower']
+    print(f">On {pdb_name_lower}")
+    pkl_file_path = meta_row['pkl_file_path']
+    mmcif_file_path = meta_row['mmcif_file_path']
+    pkl_save_path_dir = os.path.dirname(pkl_file_path)
+    pkl_save_path_root = os.path.dirname(pkl_save_path_dir)
+    # parser structure model
+    with open(mmcif_file_path, 'r') as f:
+        parsed_mmcif = mmcif_parsing.parse(
+            file_id=pdb_name_lower, mmcif_string=f.read())
+    model = parsed_mmcif.mmcif_object.structure
+    # load feat pkl file
+    feat_chains = du.read_pkl(f"{pkl_save_path_root}_backup/{pdb_name_lower[1:3]}/{pdb_name_lower}.pkl")
+
+    new_feat_chains = {}
+    # update feats with atom occupancy
+    for chain_auth_id, chain_obj in feat_chains.items():
+        chain_occupancy = []
+        for res in model[chain_auth_id]:
+            res_id = res.id #(hetero flag, sequence identifier, insertion code)
+            if res_id[0] != ' ':
+                continue
+            occupancy = np.ones((residue_constants.atom_type_num,), dtype=np.float16) * -1
+            for atom in res:
+                if atom.name not in residue_constants.atom_types:
+                    continue
+                occupancy[residue_constants.atom_order[atom.name]] = atom.occupancy
+            chain_occupancy.append(occupancy)
+        chain_obj.occupancy = np.array(chain_occupancy)
+        new_feat_chains[chain_auth_id] = chain_obj
+    
+    if debug:
+        du.write_pkl(f"{pkl_save_path_dir}/{pdb_name_lower}_new.pkl", new_feat_chains, create_dir=True)
+    else:
+        du.write_pkl(f"{pkl_save_path_dir}/{pdb_name_lower}.pkl", new_feat_chains, create_dir=True)
+    return pdb_name_lower
+
+def histogram_labels(row_idx: int, metadata: pd.DataFrame,):
+    """Collect label values and check histogram of
+    1) residue depth
+    2) Cb pairwise distance (X)
+    3) occupancy weighted b-factors
+    """
+    meta_row = metadata.iloc[row_idx]
+    pdb_chain_name = meta_row['pdb_auth_chain']
+    print(f">On {pdb_chain_name}",flush=True)
+    auth_chain_id = pdb_chain_name.split('_')[-1]
+    pkl_file_path = meta_row['pkl_file_path']
+    feat_chains = du.read_pkl(pkl_file_path)
+    target_chain_feat = feat_chains[auth_chain_id]
+    label_pos_dict = {}
+    seq_len = target_chain_feat.depth_resi.shape[0]
+    label_pos_dict['pdb_auth_chain'] = [pdb_chain_name]*seq_len
+    label_pos_dict['res_id'] = list(range(seq_len))
+    label_pos_dict['depth_resi'] = np.array(target_chain_feat.depth_resi, dtype=np.float32)
+    label_pos_dict['b_factor_weighted'] = calc_weighted_B_factors(target_chain_feat.occupancy, target_chain_feat.b_factors)
+    label_pos_df = pd.DataFrame.from_dict(label_pos_dict)
+    return label_pos_df
+
+def calc_weighted_B_factors(occupancy: np.ndarray, b_factor: np.ndarray, dtype: np.dtype=None):
+    occupancy_with_nan = np.where(occupancy==-1, np.nan, occupancy)
+    b_factor_with_nan = np.where(occupancy==0, np.nan, b_factor)
+    resi_weighted_sum = np.nansum(np.multiply(occupancy_with_nan, b_factor_with_nan),axis=1)
+    occupancy_sum = np.nansum(occupancy_with_nan,axis=1)
+    occupancy_sum = np.where(occupancy_sum==0, 1., occupancy_sum)
+    resi_weighted_mean = np.divide(resi_weighted_sum, occupancy_sum)
+    return resi_weighted_mean.astype(np.float32)
 
 def main(args):
     # Get all mmcif files to read.
@@ -656,5 +779,14 @@ if __name__ == "__main__":
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     args = parser.parse_args()
-    main(args)
-    #combine_sub_metas('/scratch/user/sunyuanfei/Projects/M3_PLM/data/pdb_pickles')
+    task = args.task
+    if task == 'pdb_preprocess':
+        main(args)
+    elif task == 'combine_sub_metas':
+        combine_sub_metas(args.write_dir)
+    elif task == 'feat_append':
+        main_append_extra_feat_to_pkl(args)
+    elif task == 'histogram':
+        main_check_label_histogram(args)
+    else:
+        print(f"invalid task {task}")

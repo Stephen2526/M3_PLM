@@ -44,6 +44,7 @@ dependencies:
   - conda-forge::openjdk=11.0.*
   - conda-forge::ml-collections
   - anaconda::absl-py
+  - conda-forge::matplotlib
 
   # - scipy
   # - scikit-learn
