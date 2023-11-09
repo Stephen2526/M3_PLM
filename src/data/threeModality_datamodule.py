@@ -164,39 +164,34 @@ class ThreeModalitySingleDataset(Dataset):
             self._log.warning(f"No processed feature file for {pdb_auth_chain}")
         chain_feats = self._process_data_row(processed_file_path)
         
-        out_feats = {}
+        out_feats = {
+            'res_mask': chain_feats['res_mask'],
+            'torsion_angles_sin_cos': chain_feats['torsion_angles_sin_cos'],
+            }
 
-        # homologs
-        chain_feats['homoSeq_aatype'] # list[list[int]]
+        # homologs (select DB based on config)
+        chain_feats['homoSeq_aatype_*'] # list[list[int]]
         chain_feats['pdb_temp'] # list[str]
-
-        # modeled indices
-        modeled_min = chain_feats['modeled_min']
-        modeled_max = chain_feats['modeled_max']
-
+     
         ### sequence processing ###
-        #aa_ids = chain_feats['aatype_arr']
-        #aa_id2str = lambda x: residue_constants.restypes[x] if x < residue_constants.restype_num else 'X'
-        #aa_str = ''.join([aa_id2str(si) for si in aa_ids]).strip('X')
-        
-        aa_int_tokens = np.array(self.tokenizer.encode(chain_feats['seqres'][modeled_min:(modeled_max+1)], add_special_tokens=False, truncation=False, padding=False), np.uint8)
-        aa_masked_ids, aa_labels, aa_permu_idx, aa_types, _ = self._apply_aa_span_mask(aa_int_tokens)
-        # add the [CLS].id at beginning
-        aa_masked_ids = np.insert(aa_masked_ids, 0, self.tokenizer.cls_token_id, axis=0)
-        aa_unmasked_ids = np.insert(aa_int_tokens, 0, self.tokenizer.cls_token_id, axis=0)
-        aa_labels = np.insert(aa_labels, 0, self.config.label_ignore, axis=0)
-        aa_permu_idx = np.insert(aa_permu_idx + 1, 0, 0, axis=0)
-        aa_types = np.insert(aa_types, 0, 0, axis=0)
+        aa_masked_ids, aa_unmasked_ids, aa_labels, aa_permu_idx, aa_types = self._sequence_pipeline(chain_feats)
 
         out_feats['aa_input_ids'] = aa_masked_ids
+        out_feats['aa_input_ids_origin'] = aa_unmasked_ids
         out_feats['aa_label_ids'] = aa_labels
         out_feats['aa_permu_idx'] = aa_permu_idx
         out_feats['aa_type_ids'] = aa_types
         
         ### Spatial topology ###
-        ss_masked_ids, label_ss_types, label_dist, label_depth, label_bfactor = self._apply_topo_mask(chain_feats)
-        
+        ss_masked_ids, ss_labels, ss_dist_label, ss_depth_label, ss_bfactor_label = self._topology_pipeline(chain_feats)
 
+        out_feats['ss_input_ids'] = ss_masked_ids
+        out_feats['ss_label_ids'] = ss_labels
+        out_feats['ss_dist_label'] = ss_dist_label
+        out_feats['ss_depth_label'] = ss_depth_label
+        out_feats['ss_bfactor_label'] = ss_bfactor_label
+
+        
         # Backbone diffusion
         # Use a fixed seed for evaluation.
         if self.is_training:
@@ -210,9 +205,9 @@ class ThreeModalitySingleDataset(Dataset):
         if np.sum(diffused_mask) < 1:
             raise ValueError('Must be diffused')
         fixed_mask = 1 - diffused_mask
-        chain_feats['fixed_mask'] = fixed_mask
-        chain_feats['rigids_0'] = gt_bb_rigid.to_tensor_7()
-        chain_feats['sc_ca_t'] = torch.zeros_like(gt_bb_rigid.get_trans())
+        out_feats['fixed_mask'] = fixed_mask
+        out_feats['rigids_0'] = gt_bb_rigid.to_tensor_7()
+        out_feats['sc_ca_t'] = torch.zeros_like(gt_bb_rigid.get_trans())
 
         # Sample t and diffuse.
         if self.is_training:
@@ -230,24 +225,137 @@ class ThreeModalitySingleDataset(Dataset):
                 diffuse_mask=None,
                 as_tensor_7=True,
             )
-        chain_feats.update(diff_feats_t)
-        chain_feats['t'] = t
+        out_feats.update(diff_feats_t)
+        out_feats['t'] = t
         
         # Convert all features to tensors.
         final_feats = tree.map_structure(
-            lambda x: x if torch.is_tensor(x) else torch.tensor(x), chain_feats)
+            lambda x: x if torch.is_tensor(x) else torch.tensor(x), out_feats)
         final_feats = du.pad_feats(final_feats, data_row['modeled_seq_len']) #TODO: change padding
         if self.is_training:
             return final_feats
         else:
-            return final_feats, pdb_name
+            return final_feats
 
     def collate_fn(self, batch: List[Any]) -> Dict[str, torch.Tensor]:
         
         return
     
-    def _get_chain_feat():
+    def _sequence_pipeline(self, chain_feats: dict):
+        """
+        """
+        #aa_ids = chain_feats['aatype_arr']
+        #aa_id2str = lambda x: residue_constants.restypes[x] if x < residue_constants.restype_num else 'X'
+        #aa_str = ''.join([aa_id2str(si) for si in aa_ids]).strip('X')
+        
+        # modeled indices
+        modeled_min = chain_feats['modeled_min']
+        modeled_max = chain_feats['modeled_max']
+        
+        aa_int_tokens = np.array(self.tokenizer.encode(chain_feats['seqres'][modeled_min:(modeled_max+1)], add_special_tokens=False, truncation=False, padding=False), np.uint8)
+        aa_masked_ids, aa_labels, aa_permu_idx, aa_types, _ = self._apply_aa_span_mask(aa_int_tokens)
+        # add the [CLS].id at beginning
+        aa_masked_ids = np.insert(aa_masked_ids, 0, self.tokenizer.cls_token_id, axis=0)
+        aa_unmasked_ids = np.insert(aa_int_tokens, 0, self.tokenizer.cls_token_id, axis=0)
+        aa_labels = np.insert(aa_labels, 0, self.config.label_ignore, axis=0)
+        aa_permu_idx = np.insert(aa_permu_idx + 1, 0, 0, axis=0)
+        aa_types = np.insert(aa_types, 0, 0, axis=0)
 
+        return aa_masked_ids, aa_unmasked_ids, aa_labels, aa_permu_idx, aa_types
+
+    def _topology_pipeline(self,
+                         chain_feats: dict):
+        """apply SSE masking and prepare prediction labels for topology learning
+        SS8 seq tokenization and masking. The masking entities follow PTGL's node assignments
+        Prediction labels include SS8 types for masked positions, pairwise Cb distance bins among helices and sheets, residue depth for helices and sheets, Cb b_factors for coils)
+
+        Args:
+            chain_feats:
+                dictionary of chain features
+        
+        Returns:
+            ss8_masked_ids: [num_resi,]
+            label_ss8_ids: [num_resi,]
+            label_dist: [num_resi, num_resi]
+            label_depth: [num_resi,]
+            label_bfactor: [num_resi,]
+        """
+        seqRes_str = chain_feats['seqres']
+        sse_contacts = chain_feats['sse_contacts'] # dict(dict), utils.trim_PTGL_gml
+        ss8_ids_arr = chain_feats['sse8_type_ids_arr'] # [num_res,]
+
+        # get a sse type masking array (0-coil, 1-helix, 2-sheet)
+        type_mask_map = {'H':1, 'E':2}
+        sse_type_mask = np.zeros(ss8_ids_arr.shape[0], dtype=np.uint8)
+        sse_node_ids_clc = {1: [], 2: [], 0: []}
+        sse_node_len_clc = {1: [], 2: [], 0: []}
+        for sse_node_id, sse_node_value in sse_contacts['sse_nodes'].items():
+            node_res_pos = sse_node_value['seqRes_ids']
+            node_type_id = type_mask_map.get(sse_node_value['sse_type'],0)
+            sse_node_ids_clc[node_type_id].append(sse_node_id)
+            sse_node_len_clc[node_type_id].append(len(node_res_pos))
+            sse_type_mask[node_res_pos] = node_type_id
+
+        # select SSEs for masking
+        # probability from rescaled SSE length with ln(x)
+        helix_mask_size = max(1, int(len(sse_node_ids_clc[1])*self.config.sse_mask_ratio))
+        sheet_mask_size = max(1, int(len(sse_node_ids_clc[2])*self.config.sse_mask_ratio))
+        helix_rescale_len = np.log(sse_node_len_clc[1])
+        sheet_rescale_len = np.log(sse_node_len_clc[2])
+        helix_selected_ids = np.random.choice(sse_node_ids_clc[1], size=helix_mask_size, replace=False, p=helix_rescale_len/np.sum(helix_rescale_len))
+        sheet_selected_ids = np.random.choice(sse_node_ids_clc[2], size=sheet_mask_size, replace=False, p=sheet_rescale_len/np.sum(sheet_rescale_len))
+    
+        ss8_masked_ids = np.array([self.tokenizer.convert_tokens_to_ids(residue_constants.SS8_id2char[ssi].lower()) for ssi in ss8_ids_arr], dtype=np.uint8)
+        label_ss8_ids = np.ones(ss8_ids_arr.shape[0], dtype=np.int8) * self.config.label_ignore
+        for ss_m in np.concatenate((helix_selected_ids,sheet_selected_ids)):
+            pos2mask = sse_contacts['sse_nodes'][ss_m]['seqRes_ids']
+            ss8_masked_ids[pos2mask] = self.tokenizer.mask_ss_token_id
+            for pos_i in pos2mask:
+                label_ss8_ids[pos_i] = self.tokenizer.convert_tokens_to_ids(residue_constants.SS8_id2char[ss8_ids_arr[pos_i]].lower())
+        
+        # pairwise-distance between SSEs (helix and sheet)
+        atom_pos_arr = chain_feats['atom_pos_arr'] # [num_res,37,3]
+        atom_mask_arr = chain_feats['atom_mask_arr'] # [num_res,37]
+        Cb_atom_idx = self._get_Cb_atom_idx(seqRes_str)
+        resi_distMap = self._get_distanceMap(
+                                atom_pos_arr=atom_pos_arr,
+                                atom_mask_arr=atom_mask_arr,
+                                atom_idx=Cb_atom_idx,
+                                sse_type_mask=sse_type_mask,
+                                coil_exclude=True)
+        label_dist = self._discretize_any(
+                input_arr=resi_distMap,
+                first_cutoff=self.config.distogram.first_cutoff,
+                last_cutoff=self.config.distogram.last_cutoff,
+                num_bins=self.config.distogram.num_bins,
+                ignore_index=self.config.label_ignore)
+
+        # residue depth (discretize into bins)
+        label_depth = np.copy(chain_feats['depth_resi_arr']) # [num_res,]
+        label_depth = self._discretize_any(
+                input_arr=label_depth,
+                first_cutoff=self.config.depth.first_cutoff,
+                last_cutoff=self.config.depth.last_cutoff,
+                num_bins=self.config.depth.num_bins,
+                ignore_index=self.config.label_ignore)
+        coil_indx = np.where(sse_type_mask==0)[0]
+        label_depth[coil_indx] = self.config.label_ignore
+
+        # coil Ca b-factors (discretize into bins)
+        cb_b_factor_arr = self._get_Cb_b_factor(chain_feats['b_factors_arr'],Cb_atom_idx) # [num_res, num_atom_type(37)]
+        label_bfactor = self._discretize_any(
+                input_arr=cb_b_factor_arr,
+                first_cutoff=self.config.Bfactor.first_cutoff,
+                last_cutoff=self.config.Bfactor.last_cutoff,
+                num_bins=self.config.Bfactor.num_bins,
+                ignore_index=self.config.label_ignore)
+        non_coil_indx = np.where(sse_type_mask!=0)[0]
+        label_bfactor[non_coil_indx] = self.config.label_ignore
+
+        return ss8_masked_ids, label_ss8_ids, label_dist, label_depth, label_bfactor
+
+    def _structure_pipeline(self,):
+        
         return
 
     def _apply_aa_span_mask(self, inputs: np.ndarray):
@@ -429,97 +537,6 @@ class ThreeModalitySingleDataset(Dataset):
 
         return masked_tokens_aug, labels_aug
 
-    def _apply_topo_mask(self,
-                         chain_feats: dict):
-        """apply SSE masking and prepare prediction labels for topology learning
-        SS8 seq tokenization and masking. The masking entities follow PTGL's node assignments
-        Prediction labels include SS8 types for masked positions, pairwise Cb distance bins among helices and sheets, residue depth for helices and sheets, Cb b_factors for coils)
-
-        Args:
-            chain_feats:
-                dictionary of chain features
-        
-        Returns:
-            ss8_masked_ids: [num_resi,]
-            label_ss8_ids: [num_resi,]
-            label_dist: [num_resi, num_resi]
-            label_depth: [num_resi,]
-            label_bfactor: [num_resi,]
-        """
-        seqRes_str = chain_feats['seqres']
-        sse_contacts = chain_feats['sse_contacts'] # dict(dict), utils.trim_PTGL_gml
-        ss8_ids_arr = chain_feats['sse8_type_ids_arr'] # [num_res,]
-
-        # get a sse type masking array (0-coil, 1-helix, 2-sheet)
-        type_mask_map = {'H':1, 'E':2}
-        sse_type_mask = np.zeros(ss8_ids_arr.shape[0], dtype=np.uint8)
-        sse_node_ids_clc = {1: [], 2: [], 0: []}
-        sse_node_len_clc = {1: [], 2: [], 0: []}
-        for sse_node_id, sse_node_value in sse_contacts['sse_nodes'].items():
-            node_res_pos = sse_node_value['seqRes_ids']
-            node_type_id = type_mask_map.get(sse_node_value['sse_type'],0)
-            sse_node_ids_clc[node_type_id].append(sse_node_id)
-            sse_node_len_clc[node_type_id].append(len(node_res_pos))
-            sse_type_mask[node_res_pos] = node_type_id
-
-        # select SSEs for masking
-        # probability from rescaled SSE length with ln(x)
-        helix_mask_size = max(1, int(len(sse_node_ids_clc[1])*self.config.sse_mask_ratio))
-        sheet_mask_size = max(1, int(len(sse_node_ids_clc[2])*self.config.sse_mask_ratio))
-        helix_rescale_len = np.log(sse_node_len_clc[1])
-        sheet_rescale_len = np.log(sse_node_len_clc[2])
-        helix_selected_ids = np.random.choice(sse_node_ids_clc[1], size=helix_mask_size, replace=False, p=helix_rescale_len/np.sum(helix_rescale_len))
-        sheet_selected_ids = np.random.choice(sse_node_ids_clc[2], size=sheet_mask_size, replace=False, p=sheet_rescale_len/np.sum(sheet_rescale_len))
-    
-        ss8_masked_ids = np.array([self.tokenizer.convert_tokens_to_ids(residue_constants.SS8_id2char[ssi].lower()) for ssi in ss8_ids_arr], dtype=np.uint8)
-        label_ss8_ids = np.ones(ss8_ids_arr.shape[0], dtype=np.int8) * self.config.label_ignore
-        for ss_m in np.concatenate((helix_selected_ids,sheet_selected_ids)):
-            pos2mask = sse_contacts['sse_nodes'][ss_m]['seqRes_ids']
-            ss8_masked_ids[pos2mask] = self.tokenizer.mask_ss_token_id
-            for pos_i in pos2mask:
-                label_ss8_ids[pos_i] = self.tokenizer.convert_tokens_to_ids(residue_constants.SS8_id2char[ss8_ids_arr[pos_i]].lower())
-        
-        # pairwise-distance between SSEs (helix and sheet)
-        atom_pos_arr = chain_feats['atom_pos_arr'] # [num_res,37,3]
-        atom_mask_arr = chain_feats['atom_mask_arr'] # [num_res,37]
-        Cb_atom_idx = self._get_Cb_atom_idx(seqRes_str)
-        resi_distMap = self._get_distanceMap(
-                                atom_pos_arr=atom_pos_arr,
-                                atom_mask_arr=atom_mask_arr,
-                                atom_idx=Cb_atom_idx,
-                                sse_type_mask=sse_type_mask,
-                                coil_exclude=True)
-        label_dist = self._discretize_any(
-                input_arr=resi_distMap,
-                first_cutoff=self.config.distogram.first_cutoff,
-                last_cutoff=self.config.distogram.last_cutoff,
-                num_bins=self.config.distogram.num_bins,
-                ignore_index=self.config.label_ignore)
-
-        # residue depth (discretize into bins)
-        label_depth = np.copy(chain_feats['depth_resi_arr']) # [num_res,]
-        label_depth = self._discretize_any(
-                input_arr=label_depth,
-                first_cutoff=self.config.depth.first_cutoff,
-                last_cutoff=self.config.depth.last_cutoff,
-                num_bins=self.config.depth.num_bins,
-                ignore_index=self.config.label_ignore)
-        coil_indx = np.where(sse_type_mask==0)[0]
-        label_depth[coil_indx] = self.config.label_ignore
-
-        # coil Ca b-factors (discretize into bins)
-        cb_b_factor_arr = self._get_Cb_b_factor(chain_feats['b_factors_arr'],Cb_atom_idx) # [num_res, num_atom_type(37)]
-        label_bfactor = self._discretize_any(
-                input_arr=cb_b_factor_arr,
-                first_cutoff=self.config.Bfactor.first_cutoff,
-                last_cutoff=self.config.Bfactor.last_cutoff,
-                num_bins=self.config.Bfactor.num_bins,
-                ignore_index=self.config.label_ignore)
-        non_coil_indx = np.where(sse_type_mask!=0)[0]
-        label_bfactor[non_coil_indx] = self.config.label_ignore
-
-        return ss8_masked_ids, label_ss8_ids, label_dist, label_depth, label_bfactor
-    
     def _get_Cb_atom_idx(
             self,
             seqRes_str: str) -> np.ndarray:

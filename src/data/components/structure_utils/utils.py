@@ -354,11 +354,7 @@ def parse_a3m_rawSeq(file_path: str):
 
     Returns:
         A tuple of:
-            * A list of sequences that have been aligned to the query. These
-                might contain duplicates.
-            * The deletion matrix for the alignment as a list of lists. The element
-                at `deletion_matrix[i][j]` is the number of residues deleted from
-                the aligned sequence i at residue position j.
+            * 
     """
     if file_path.split('.')[-1] == 'gz':
         with gzip.open(file_path, 'rt') as fp:
